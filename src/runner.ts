@@ -29,12 +29,19 @@ async function sendTelegramIfConfigured(report: ScanReport): Promise<void> {
     return;
   }
   const summary = formatScanSummaryForTelegram(report);
+  console.log("[Telegram] sending scan summary…");
   const ok = await sendTelegramMessages(
     config.telegramBotToken,
     config.telegramChatId,
     summary
   );
-  if (!ok) console.warn("[Telegram] one or more messages failed");
+  if (ok) {
+    console.log("[Telegram] message delivered.");
+  } else {
+    console.warn(
+      "[Telegram] delivery failed — check token, chat id, and that you sent /start to the bot in that chat."
+    );
+  }
 }
 
 async function executeTradesForReport(report: ScanReport): Promise<void> {

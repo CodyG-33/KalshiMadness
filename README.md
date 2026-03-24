@@ -97,6 +97,8 @@ Add every relevant **series ticker** to `KALSHI_SCAN_SERIES` so game markets and
 
 Each `npm run scan` sends a **short alert summary** (first 25 alerts). If trading is on, you also get a line per planned order and success/failure for live orders.
 
+**Troubleshooting:** Use `TELEGRAM_ENABLED=true` (or `yes` / `on` / `1`). The console prints `[Telegram] sending…` then `message delivered.` or an error from Telegram (e.g. chat not found — open the bot and send `/start` first).
+
 ## Trading (optional)
 
 | Variable | Purpose |

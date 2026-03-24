@@ -12,10 +12,19 @@ export async function sendTelegramMessages(
   chatId: string,
   text: string
 ): Promise<boolean> {
-  if (!botToken || !chatId || !text.trim()) return true;
+  if (!botToken || !chatId) {
+    console.warn("[Telegram] missing bot token or chat id");
+    return false;
+  }
+  const payload = text.trim() || "KalshiMadness — scan complete (no summary text).";
+
+  const chatIdTrim = chatId.trim();
+  const chatIdJson: string | number = /^-?\d+$/.test(chatIdTrim)
+    ? parseInt(chatIdTrim, 10)
+    : chatIdTrim;
 
   const chunks: string[] = [];
-  const lines = text.split("\n");
+  const lines = payload.split("\n");
   let buf = "";
   for (const line of lines) {
     const next = buf ? `${buf}\n${line}` : line;
@@ -40,14 +49,21 @@ export async function sendTelegramMessages(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          chat_id: chatId,
+          chat_id: chatIdJson,
           text: body,
           disable_web_page_preview: true,
         }),
       });
       if (!res.ok) {
         const errText = await res.text();
-        console.error("[Telegram]", res.status, errText);
+        let detail = errText;
+        try {
+          const j = JSON.parse(errText) as { description?: string };
+          if (j.description) detail = j.description;
+        } catch {
+          /* keep raw */
+        }
+        console.error("[Telegram] sendMessage failed:", res.status, detail);
         ok = false;
       }
     } catch (e) {

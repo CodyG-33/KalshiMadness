@@ -3,7 +3,8 @@ import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
 
-dotenv.config({ path: path.join(__dirname, "..", ".env") });
+/** `.env` wins over pre-set shell vars (fixes TELEGRAM_ENABLED=false stuck in environment). */
+dotenv.config({ path: path.join(__dirname, "..", ".env"), override: true });
 
 const PROJECT_ROOT = path.join(__dirname, "..");
 /** Inline env PEM shorter than this is treated as a placeholder (real RSA PEMs are much longer). */
@@ -157,6 +158,21 @@ function normalizeTradeExecution(v: string): "taker" | "maker" {
   return v.trim().toLowerCase() === "maker" ? "maker" : "taker";
 }
 
+/** Accepts true / 1 / yes / on (any case). */
+function parseEnvBool(raw: string | undefined): boolean {
+  const v = (raw ?? "").trim().toLowerCase();
+  return v === "true" || v === "1" || v === "yes" || v === "on";
+}
+
+function stripOuterQuotes(s: string): string {
+  const t = s.trim();
+  if (t.length >= 2) {
+    if (t.startsWith('"') && t.endsWith('"')) return t.slice(1, -1).trim();
+    if (t.startsWith("'") && t.endsWith("'")) return t.slice(1, -1).trim();
+  }
+  return t;
+}
+
 export const config = {
   apiKey: process.env.KALSHI_API_KEY ?? "",
   get privateKeyPem(): string {
@@ -184,10 +200,10 @@ export const config = {
   scanVerboseReport:
     process.env.SCAN_VERBOSE_REPORT === "true" || process.env.SCAN_VERBOSE_REPORT === "1",
 
-  /** Telegram: set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID and TELEGRAM_ENABLED=true */
-  telegramEnabled: process.env.TELEGRAM_ENABLED === "true" || process.env.TELEGRAM_ENABLED === "1",
-  telegramBotToken: (process.env.TELEGRAM_BOT_TOKEN ?? "").trim(),
-  telegramChatId: (process.env.TELEGRAM_CHAT_ID ?? "").trim(),
+  /** Telegram: set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID and TELEGRAM_ENABLED=true (or yes/on/1) */
+  telegramEnabled: parseEnvBool(process.env.TELEGRAM_ENABLED),
+  telegramBotToken: stripOuterQuotes((process.env.TELEGRAM_BOT_TOKEN ?? "").trim()),
+  telegramChatId: stripOuterQuotes((process.env.TELEGRAM_CHAT_ID ?? "").trim()),
 
   /**
    * off — alerts only (default)

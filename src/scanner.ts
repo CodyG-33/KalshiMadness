@@ -242,14 +242,24 @@ export function formatScanSummaryForTelegram(report: ScanReport): string {
   if (report.alerts.length === 0) {
     lines.push("No alerts over current thresholds.");
   }
-  const prev = report.correlated.pairs.slice(0, 5);
-  if (prev.length > 0) {
-    lines.push("Tightest tradable pairs (smallest |Δp|):");
-    for (const pair of prev) {
-      const pa = pair.advance.pYes;
-      const pb = pair.game.pYes;
-      const d =
-        pa != null && pb != null ? Math.abs(pa - pb).toFixed(3) : "?";
+
+  const TELEGRAM_TOP_SPREADS = 8;
+  const spread = (p: CorrelatedPair) => {
+    const pa = p.advance.pYes;
+    const pb = p.game.pYes;
+    if (pa == null || pb == null) return -1;
+    return Math.abs(pa - pb);
+  };
+  const widest = [...report.correlated.pairs]
+    .filter((p) => spread(p) >= 0)
+    .sort((a, b) => spread(b) - spread(a))
+    .slice(0, TELEGRAM_TOP_SPREADS);
+
+  if (widest.length > 0) {
+    lines.push(`Widest tradable spreads (largest |Δp|, up to ${TELEGRAM_TOP_SPREADS}):`);
+    for (const pair of widest) {
+      const g = spread(pair);
+      const d = g >= 0 ? g.toFixed(3) : "?";
       lines.push(`  |Δ|=${d}`);
       lines.push(`    ${pair.advance.market.ticker} vs ${pair.game.market.ticker}`);
     }
