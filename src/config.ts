@@ -139,7 +139,7 @@ function parseSeriesList(raw: string): string[] {
 }
 
 function parseTradeAlertTypes(raw: string | undefined): Set<string> {
-  const s = (raw ?? "equiv_gap,ordering_violation,advance_monotonicity")
+  const s = (raw ?? "equiv_gap,ordering_violation")
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean);
@@ -172,8 +172,13 @@ export const config = {
     process.env.KALSHI_SCAN_SERIES ??
       "KXNCAAMBGAME"
   ),
-  minEquivProbGap: parseFloat(process.env.MIN_EQUIV_PROB_GAP ?? "0.04"),
+  /** Min |Δ implied YES| to flag E8 advance vs same-team game line (tradable pair only). */
+  minEquivProbGap: parseFloat(process.env.MIN_EQUIV_PROB_GAP ?? "0.015"),
   maxAdvanceOverWin: parseFloat(process.env.MAX_ADVANCE_OVER_WIN ?? "0.02"),
+  /**
+   * Tradable E8-vs-game alerts are skipped if |Δp| exceeds this (usually means wrong pairing, not arb).
+   */
+  maxTradableCompareGap: parseFloat(process.env.MAX_TRADABLE_COMPARE_GAP ?? "0.10"),
   scanLoopIntervalSec: parseInt(process.env.SCAN_LOOP_INTERVAL_SEC ?? "120", 10),
 
   /** Telegram: set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID and TELEGRAM_ENABLED=true */

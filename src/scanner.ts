@@ -4,6 +4,11 @@ import { classifyMarketKind, teamFingerprint, type MarketKind } from "./classify
 import { fetchAllScanMarkets } from "./fetch-markets";
 import { impliedYesProb } from "./market-math";
 import {
+  isEliteEightAdvanceContract,
+  isTradableEliteEightVsGamePair,
+  teamCodeFromTicker,
+} from "./tradable-pairs";
+import {
   type BracketRound,
   type PropBucket,
   classifyPropBucket,
@@ -34,22 +39,68 @@ export interface DiscrepancyAlert {
   b: AnnotatedMarket;
 }
 
-/** Deeper rounds need more wins; used for advance-to-Round-X monotonicity. */
-function advanceDepth(r: BracketRound): number | null {
-  switch (r) {
-    case "r32":
-      return 1;
-    case "s16":
-      return 2;
-    case "e8":
-      return 3;
-    case "f4":
-      return 4;
-    case "r64":
-      return 0;
-    default:
-      return null;
+/** Tradable leg: Elite Eight advance vs same-team NCAA game moneyline. */
+export type CorrelatedLinkType = "e8_advance_vs_game";
+
+export interface CorrelatedPair {
+  linkType: CorrelatedLinkType;
+  /** Always the E8 advance contract */
+  advance: AnnotatedMarket;
+  /** Same-team KXNCAAMBGAME (or *GAME* series) moneyline */
+  game: AnnotatedMarket;
+}
+
+export interface CorrelatedPairsBundle {
+  /** Rows to print (sorted by |Δp| when truncated) */
+  pairs: CorrelatedPair[];
+  total: number;
+  truncated: boolean;
+}
+
+const MAX_CORRELATED_PAIR_ROWS = 200;
+
+function gapAbs(pa: number | null, pb: number | null): number {
+  if (pa == null || pb == null) return -1;
+  return Math.abs(pa - pb);
+}
+
+function leg(x: AnnotatedMarket) {
+  return {
+    ticker: x.market.ticker,
+    kind: x.kind,
+    bracketRound: x.bracketRound,
+  };
+}
+
+/**
+ * Only **tradable** pairs: Elite Eight advance (ticker …26E8… or e8 copy) vs same team code
+ * on a scanned *GAME* series moneyline. Sorted by smallest |Δp| first (tightest = most interesting).
+ */
+export function buildCorrelatedPairsBundle(annotated: AnnotatedMarket[]): CorrelatedPairsBundle {
+  const series = config.scanSeries;
+  const raw: CorrelatedPair[] = [];
+  for (let i = 0; i < annotated.length; i++) {
+    for (let j = i + 1; j < annotated.length; j++) {
+      const x = annotated[i];
+      const y = annotated[j];
+      if (!isTradableEliteEightVsGamePair(leg(x), leg(y), series)) continue;
+      const adv = isEliteEightAdvanceContract(x.market.ticker, x.kind, x.bracketRound) ? x : y;
+      const game = adv === x ? y : x;
+      raw.push({ linkType: "e8_advance_vs_game", advance: adv, game });
+    }
   }
+  const scored = raw.map((pair) => ({
+    pair,
+    g: gapAbs(pair.advance.pYes, pair.game.pYes),
+  }));
+  scored.sort((u, v) => {
+    const au = u.g >= 0 ? u.g : 999;
+    const av = v.g >= 0 ? v.g : 999;
+    return au - av;
+  });
+  const truncated = scored.length > MAX_CORRELATED_PAIR_ROWS;
+  const pairs = scored.slice(0, MAX_CORRELATED_PAIR_ROWS).map((s) => s.pair);
+  return { pairs, total: raw.length, truncated };
 }
 
 function annotate(m: Market): AnnotatedMarket {
@@ -78,98 +129,45 @@ function groupBy<K, V>(items: V[], keyFn: (v: V) => K): Map<K, V[]> {
 }
 
 /**
- * Find pairs that may be economically linked (same team fingerprint, different kinds).
- * Heuristic only — confirm rules and settlement text before trading.
+ * Tradable-pair alerts only: Elite Eight advance vs same-team game moneyline, |Δp| ≤ maxTradableCompareGap.
  */
-export function findDiscrepancies(markets: Market[]): DiscrepancyAlert[] {
-  const ann = markets.map(annotate);
+export function findDiscrepancies(annotated: AnnotatedMarket[]): DiscrepancyAlert[] {
   const alerts: DiscrepancyAlert[] = [];
+  const series = config.scanSeries;
+  const maxGap = config.maxTradableCompareGap;
 
-  const byTeam = groupBy(ann, (x) => x.teamKey);
-  for (const [teamKey, group] of byTeam) {
-    if (!teamKey || teamKey.length < 3 || group.length < 2) continue;
+  for (let i = 0; i < annotated.length; i++) {
+    for (let j = i + 1; j < annotated.length; j++) {
+      const x = annotated[i];
+      const y = annotated[j];
+      if (!isTradableEliteEightVsGamePair(leg(x), leg(y), series)) continue;
 
-    const advances = group.filter((x) => x.kind === "advance");
-    const wins = group.filter((x) => x.kind === "single_game_win");
+      const adv = isEliteEightAdvanceContract(x.market.ticker, x.kind, x.bracketRound) ? x : y;
+      const game = adv === x ? y : x;
+      const pa = adv.pYes;
+      const pb = game.pYes;
+      if (pa == null || pb == null) continue;
 
-    for (const a of advances) {
-      for (const b of wins) {
-        const pa = a.pYes;
-        const pb = b.pYes;
-        if (pa == null || pb == null) continue;
+      const gap = Math.abs(pa - pb);
+      if (gap > maxGap) continue;
 
-        // Nested bracket logic: P(advance to later round) should not exceed P(win this game)
-        // when "advance" is strictly downstream of that game (heuristic; false positives possible).
-        if (pa > pb + config.maxAdvanceOverWin) {
-          alerts.push({
-            type: "ordering_violation",
-            detail: `P(advance)=${pa.toFixed(3)} > P(win)=${pb.toFixed(3)} by > ${config.maxAdvanceOverWin}`,
-            a,
-            b,
-          });
-        }
-
-        // If both describe the same effective event, prices should be close.
-        const gap = Math.abs(pa - pb);
-        if (gap >= config.minEquivProbGap) {
-          alerts.push({
-            type: "equiv_gap",
-            detail: `|P(advance) - P(win)| = ${gap.toFixed(3)} ≥ ${config.minEquivProbGap}`,
-            a,
-            b,
-          });
-        }
+      if (pa > pb + config.maxAdvanceOverWin) {
+        alerts.push({
+          type: "ordering_violation",
+          detail: `P(E8 advance)=${pa.toFixed(3)} > P(game)=${pb.toFixed(3)} by > ${config.maxAdvanceOverWin} (tradable pair)`,
+          a: adv,
+          b: game,
+        });
       }
-    }
 
-    // Same kind but duplicated narratives (rare): large gap between two "win" lines same team
-    const sameKind = (k: MarketKind) => group.filter((x) => x.kind === k);
-    for (const kind of ["single_game_win", "advance"] as const) {
-      const g = sameKind(kind);
-      if (g.length < 2) continue;
-      for (let i = 0; i < g.length; i++) {
-        for (let j = i + 1; j < g.length; j++) {
-          const x = g[i];
-          const y = g[j];
-          if (x.pYes == null || y.pYes == null) continue;
-          const gap = Math.abs(x.pYes - y.pYes);
-          if (gap >= config.minEquivProbGap) {
-            alerts.push({
-              type: "equiv_gap",
-              detail: `Same kind "${kind}" |Δp|=${gap.toFixed(3)} — possible duplicate / mismatch`,
-              a: x,
-              b: y,
-            });
-          }
-        }
-      }
-    }
-  }
-
-  // Same team, two "advance to Round X" lines: P(deeper) ≤ P(shallower) on one path
-  for (const [, group] of byTeam) {
-    const adv = group.filter((x) => x.kind === "advance");
-    if (adv.length < 2) continue;
-    for (let i = 0; i < adv.length; i++) {
-      for (let j = i + 1; j < adv.length; j++) {
-        const x = adv[i];
-        const y = adv[j];
-        const dx = advanceDepth(x.bracketRound);
-        const dy = advanceDepth(y.bracketRound);
-        if (dx == null || dy == null || dx === dy) continue;
-        const deeper = dx > dy ? x : y;
-        const shallower = dx > dy ? y : x;
-        const dd = deeper.pYes;
-        const ds = shallower.pYes;
-        if (dd == null || ds == null) continue;
-        if (dd > ds + config.maxAdvanceOverWin) {
-          alerts.push({
-            type: "advance_monotonicity",
-            detail: `P(advance ${deeper.bracketRound})=${dd.toFixed(3)} > P(advance ${shallower.bracketRound})=${ds.toFixed(3)} — expect P(deeper) ≤ P(shallower)`,
-            a: deeper,
-            b: shallower,
-          });
-        }
+      if (gap >= config.minEquivProbGap) {
+        const code = teamCodeFromTicker(adv.market.ticker) ?? "?";
+        alerts.push({
+          type: "equiv_gap",
+          detail: `Tradable ${code}: |P(E8 advance) - P(game)| = ${gap.toFixed(3)} ≥ ${config.minEquivProbGap} (cap ${maxGap})`,
+          a: adv,
+          b: game,
+        });
       }
     }
   }
@@ -183,6 +181,8 @@ export interface ScanReport {
   /** Grouped props for cross-checking game lines vs aggregates (E8, S16, etc.) */
   byPropBucket: Map<PropBucket, AnnotatedMarket[]>;
   alerts: DiscrepancyAlert[];
+  /** Tradable E8 advance vs same-team game line (all such pairs, smallest |Δp| first). */
+  correlated: CorrelatedPairsBundle;
 }
 
 export async function runScan(): Promise<ScanReport> {
@@ -190,8 +190,28 @@ export async function runScan(): Promise<ScanReport> {
   const annotated = markets.map(annotate);
   const byEvent = groupBy(annotated, (x) => x.market.event_ticker);
   const byPropBucket = groupBy(annotated, (x) => x.propBucket);
-  const alerts = findDiscrepancies(markets);
-  return { markets: annotated, byEvent, byPropBucket, alerts };
+  const alerts = findDiscrepancies(annotated);
+  const correlated = buildCorrelatedPairsBundle(annotated);
+  return { markets: annotated, byEvent, byPropBucket, alerts, correlated };
+}
+
+function formatCorrelatedBlock(pair: CorrelatedPair): string[] {
+  const adv = pair.advance;
+  const game = pair.game;
+  const pa = adv.pYes;
+  const pb = game.pYes;
+  const delta =
+    pa != null && pb != null ? `|Δp|=${Math.abs(pa - pb).toFixed(3)}` : "|Δp|=n/a";
+  const code = teamCodeFromTicker(adv.market.ticker) ?? adv.teamKey ?? "?";
+  const lines: string[] = [];
+  lines.push(`  [E8 advance vs game moneyline] team=${code} ${delta}`);
+  lines.push(
+    `    Advance: ${adv.market.ticker} | round=${adv.bracketRound} | p≈${pa?.toFixed(3) ?? "?"} | ${adv.market.yes_sub_title || adv.market.title}`
+  );
+  lines.push(
+    `    Game:    ${game.market.ticker} | p≈${pb?.toFixed(3) ?? "?"} | ${game.market.yes_sub_title || game.market.title}`
+  );
+  return lines;
 }
 
 function formatAnnotatedLine(x: AnnotatedMarket): string {
@@ -204,7 +224,9 @@ function formatAnnotatedLine(x: AnnotatedMarket): string {
 export function formatScanSummaryForTelegram(report: ScanReport): string {
   const lines: string[] = [];
   lines.push(`KalshiMadness`);
-  lines.push(`Markets: ${report.markets.length} | Events: ${report.byEvent.size} | Alerts: ${report.alerts.length}`);
+  lines.push(
+    `Markets: ${report.markets.length} | Events: ${report.byEvent.size} | Alerts: ${report.alerts.length} | Correlated pairs: ${report.correlated.total}`
+  );
   lines.push("");
   const cap = 25;
   for (let i = 0; i < Math.min(report.alerts.length, cap); i++) {
@@ -220,6 +242,18 @@ export function formatScanSummaryForTelegram(report: ScanReport): string {
   if (report.alerts.length === 0) {
     lines.push("No alerts over current thresholds.");
   }
+  const prev = report.correlated.pairs.slice(0, 5);
+  if (prev.length > 0) {
+    lines.push("Tightest tradable pairs (smallest |Δp|):");
+    for (const pair of prev) {
+      const pa = pair.advance.pYes;
+      const pb = pair.game.pYes;
+      const d =
+        pa != null && pb != null ? Math.abs(pa - pb).toFixed(3) : "?";
+      lines.push(`  |Δ|=${d}`);
+      lines.push(`    ${pair.advance.market.ticker} vs ${pair.game.market.ticker}`);
+    }
+  }
   return lines.join("\n");
 }
 
@@ -230,15 +264,32 @@ export function formatReport(report: ScanReport): string {
   lines.push("");
 
   if (report.alerts.length === 0) {
-    lines.push("No heuristic discrepancies matched current thresholds.");
+    lines.push("No tradable-pair discrepancies matched current thresholds (E8 advance vs game, |Δp| ≤ cap).");
   } else {
-    lines.push(`Alerts (${report.alerts.length}):`);
+    lines.push(`Alerts — tradable pairs only (${report.alerts.length}):`);
     for (const alert of report.alerts) {
       const ma = alert.a.market;
       const mb = alert.b.market;
       lines.push(`--- [${alert.type}] ${alert.detail}`);
       lines.push(`  A: ${ma.ticker} | ${ma.yes_sub_title || ma.title} | p≈${alert.a.pYes?.toFixed(3) ?? "?"}`);
       lines.push(`  B: ${mb.ticker} | ${mb.yes_sub_title || mb.title} | p≈${alert.b.pYes?.toFixed(3) ?? "?"}`);
+    }
+  }
+
+  lines.push("");
+  const { pairs, total, truncated } = report.correlated;
+  if (total === 0) {
+    lines.push("=== Tradable pairs (E8 advance vs game moneyline) ===");
+    lines.push(
+      "  None found. Use KALSHI_SCAN_SERIES with a *GAME* series (e.g. KXNCAAMBGAME) plus MARMADROUND E8 lines (tickers containing 26E8)."
+    );
+  } else {
+    const capNote = truncated
+      ? ` (showing ${pairs.length} of ${total}, smallest |Δp| first)`
+      : " (smallest |Δp| first)";
+    lines.push(`=== Tradable pairs (E8 advance vs game moneyline)${capNote} ===`);
+    for (const pair of pairs) {
+      lines.push(...formatCorrelatedBlock(pair));
     }
   }
 

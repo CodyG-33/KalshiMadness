@@ -66,6 +66,8 @@ cp .env.example .env
 | `npm run scan:watch` | Repeat every `SCAN_LOOP_INTERVAL_SEC` |
 | `npm run balance` | Cash + portfolio value (USD) |
 
+Scans print **tradable pairs only**: **Elite Eight advance** (Kalshi `…26E8…` tickers) vs **the same team’s** `*GAME*` series moneyline (from `KALSHI_SCAN_SERIES`). Rows are sorted by **smallest `|Δp|` first**. **Alerts** use the same definition and ignore pairs with `|Δp| > MAX_TRADABLE_COMPARE_GAP` (default 10%) as non-comparable noise.
+
 Dry test without keys:
 
 ```bash
@@ -77,8 +79,9 @@ MOCK_MODE=true npm run scan
 | Variable | Meaning |
 |----------|---------|
 | `KALSHI_SCAN_SERIES` | Comma-separated series tickers (verify live names on Kalshi) |
-| `MIN_EQUIV_PROB_GAP` | Minimum \|Δ implied YES\| to flag “equivalent” pairs |
-| `MAX_ADVANCE_OVER_WIN` | Flag if P(advance) exceeds P(win) by more than this |
+| `MIN_EQUIV_PROB_GAP` | Minimum \|Δ implied YES\| to flag tradable E8 advance vs game (default 0.015) |
+| `MAX_TRADABLE_COMPARE_GAP` | Skip alerts when \|Δp\| exceeds this (default 0.10) |
+| `MAX_ADVANCE_OVER_WIN` | Flag if P(E8 advance) exceeds P(game) by more than this |
 
 Tune **`src/classify-market.ts`** (win vs advance wording) and **`src/tournament-props.ts`** (seed / upset / aggregate patterns) when Kalshi copy differs.
 

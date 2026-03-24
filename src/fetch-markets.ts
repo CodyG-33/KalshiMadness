@@ -34,9 +34,9 @@ function mockNcaaMarkets(): Market[] {
   return [
     {
       ...base,
-      ticker: "MOCK-NCAA-DUKE-WIN",
+      ticker: "KXNCAAMBGAME-MOCK-DUKE",
       event_ticker: "MOCK-EVT-DUKE-R1",
-      title: "Duke wins First Round game",
+      title: "Duke wins game",
       subtitle: "",
       yes_sub_title: "Duke wins",
       no_sub_title: "Duke does not win",
@@ -55,7 +55,7 @@ function mockNcaaMarkets(): Market[] {
     },
     {
       ...base,
-      ticker: "MOCK-NCAA-DUKE-ADV-E8",
+      ticker: "KXMARMADROUND-MOCK-26E8-DUKE",
       event_ticker: "MOCK-EVT-DUKE-E8",
       title: "Duke advances to Elite Eight",
       subtitle: "",
