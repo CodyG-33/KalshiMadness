@@ -1,0 +1,25 @@
+{
+  "name": "kalshi-madness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kalshi correlated-market scanner (NCAA / bracket-style) — auth & REST patterns from polymarket-kalshi-arbitrage-bot; NCAAB focus aligned with kalshi-ai-trading-bot",
+  "main": "dist/cli.js",
+  "scripts": {
+    "build": "tsc",
+    "scan": "ts-node src/cli.ts scan",
+    "scan:watch": "ts-node src/cli.ts scan --loop",
+    "balance": "ts-node src/cli.ts balance"
+  },
+  "keywords": ["kalshi", "prediction-markets", "ncaab"],
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "kalshi-typescript": "^3.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.2"
+  }
+}
