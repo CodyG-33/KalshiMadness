@@ -257,12 +257,7 @@ export function formatScanSummaryForTelegram(report: ScanReport): string {
   return lines.join("\n");
 }
 
-export function formatReport(report: ScanReport): string {
-  const lines: string[] = [];
-  lines.push(`Markets loaded: ${report.markets.length}`);
-  lines.push(`Unique events: ${report.byEvent.size}`);
-  lines.push("");
-
+function appendTradableAlertsAndPairs(lines: string[], report: ScanReport): void {
   if (report.alerts.length === 0) {
     lines.push("No tradable-pair discrepancies matched current thresholds (E8 advance vs game, |Δp| ≤ cap).");
   } else {
@@ -292,8 +287,9 @@ export function formatReport(report: ScanReport): string {
       lines.push(...formatCorrelatedBlock(pair));
     }
   }
+}
 
-  lines.push("");
+function appendVerboseMarketDump(lines: string[], report: ScanReport): void {
   lines.push("=== Tournament prop buckets (cross-check vs game lines) ===");
   const bucketOrder: PropBucket[] = [
     "game_moneyline",
@@ -340,6 +336,23 @@ export function formatReport(report: ScanReport): string {
     for (const x of group) {
       lines.push(formatAnnotatedLine(x));
     }
+  }
+}
+
+export function formatReport(report: ScanReport): string {
+  const lines: string[] = [];
+  lines.push(`Markets loaded: ${report.markets.length} | Unique events: ${report.byEvent.size}`);
+  lines.push("");
+  appendTradableAlertsAndPairs(lines, report);
+
+  if (config.scanVerboseReport) {
+    lines.push("");
+    appendVerboseMarketDump(lines, report);
+  } else {
+    lines.push("");
+    lines.push(
+      "— Prop buckets, playbook, and per-event dumps omitted (not tradable legs). Set SCAN_VERBOSE_REPORT=true to show. —"
+    );
   }
 
   return lines.join("\n");

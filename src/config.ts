@@ -180,6 +180,9 @@ export const config = {
    */
   maxTradableCompareGap: parseFloat(process.env.MAX_TRADABLE_COMPARE_GAP ?? "0.10"),
   scanLoopIntervalSec: parseInt(process.env.SCAN_LOOP_INTERVAL_SEC ?? "120", 10),
+  /** Full market buckets, playbook, per-event listing (default: tradable alerts + pairs only). */
+  scanVerboseReport:
+    process.env.SCAN_VERBOSE_REPORT === "true" || process.env.SCAN_VERBOSE_REPORT === "1",
 
   /** Telegram: set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID and TELEGRAM_ENABLED=true */
   telegramEnabled: process.env.TELEGRAM_ENABLED === "true" || process.env.TELEGRAM_ENABLED === "1",
