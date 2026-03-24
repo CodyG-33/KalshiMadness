@@ -26,7 +26,11 @@ npm install
 cp .env.example .env   # then edit .env with your keys (never commit .env)
 ```
 
-Fill **`.env`** with your Kalshi API key id and RSA private key PEM.
+Fill **`.env`** with your Kalshi API key id and either **`KALSHI_PRIVATE_KEY_PATH`** (PEM file in the project folder) or **`KALSHI_PRIVATE_KEY_PEM`** (single quoted line with `\n`). If both are set, a **non-empty key file wins** so a leftover placeholder `KALSHI_PRIVATE_KEY_PEM` from `.env.example` does not break signing.
+
+### `DECODER routines::unsupported` / `ERR_OSSL_UNSUPPORTED`
+
+Usually a **bad or placeholder private key** is being loaded: remove fake `YOUR_BASE64...` text from `KALSHI_PRIVATE_KEY_PEM` when using `kalshi_private_key.pem`, confirm the file is ~1.5k+ bytes (`wc -c`), and run `npm install` so the `kalshi-typescript` OpenSSL 3 patch runs.
 
 ## GitHub (collaborate)
 

@@ -6,6 +6,7 @@
   "main": "dist/cli.js",
   "scripts": {
     "build": "tsc",
+    "postinstall": "node scripts/patch-kalshi-pss-signing.js",
     "scan": "ts-node src/cli.ts scan",
     "scan:watch": "ts-node src/cli.ts scan --loop",
     "balance": "ts-node src/cli.ts balance"

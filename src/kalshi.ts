@@ -1,15 +1,18 @@
 import { Configuration, MarketApi, PortfolioApi } from "kalshi-typescript";
-import { config } from "./config";
+import { config, findKalshiPrivateKeyPem } from "./config";
+
+/** PEM string for kalshi-typescript; file path + default kalshi_private_key.pem beat short env placeholders. */
+function loadPrivateKeyPemForApi(): string {
+  if (config.mockMode) return "";
+  return findKalshiPrivateKeyPem();
+}
 
 export function buildKalshiConfiguration(): Configuration {
+  const pem = loadPrivateKeyPemForApi();
   return new Configuration({
     apiKey: config.apiKey,
     basePath: config.basePath,
-    ...(config.privateKeyPem
-      ? { privateKeyPem: config.privateKeyPem }
-      : config.privateKeyPath
-        ? { privateKeyPath: config.privateKeyPath }
-        : {}),
+    ...(pem ? { privateKeyPem: pem } : {}),
   });
 }
 

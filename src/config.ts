@@ -1,7 +1,13 @@
+import crypto from "crypto";
+import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
 
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
+
+const PROJECT_ROOT = path.join(__dirname, "..");
+/** Inline env PEM shorter than this is treated as a placeholder (real RSA PEMs are much longer). */
+const MIN_INLINE_PEM_CHARS = 280;
 
 const BASE_PATHS = {
   prod: "https://api.elections.kalshi.com/trade-api/v2",
@@ -12,7 +18,7 @@ const PEM_HEADER = "-----BEGIN RSA PRIVATE KEY-----";
 const PEM_FOOTER = "-----END RSA PRIVATE KEY-----";
 
 /** Normalize PEM for Node (literal \\n, line length) — from infraform/polymarket-kalshi-arbitrage-bot */
-function normalizePrivateKeyPem(value: string): string {
+export function normalizeKalshiPrivateKeyPem(value: string): string {
   let trimmed = value.trim().replace(/\\n/g, "\n").trim();
   let base64 = trimmed
     .replace(/-----BEGIN RSA PRIVATE KEY-----/g, "")
@@ -26,10 +32,103 @@ function normalizePrivateKeyPem(value: string): string {
   return `${PEM_HEADER}\n${lines.join("\n")}\n${PEM_FOOTER}`;
 }
 
+/**
+ * Pick a PEM string Node/OpenSSL accepts. PKCS#8 (`BEGIN PRIVATE KEY`) must not be
+ * passed through normalizeKalshiPrivateKeyPem — that helper is PKCS#1 RSA only.
+ */
+export function resolveKalshiPrivateKeyPem(rawInput: string, source: string): string {
+  const raw = rawInput
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim();
+  if (!raw) return "";
+
+  const looksPkcs8 = /^-----BEGIN (ENCRYPTED )?PRIVATE KEY-----/m.test(raw);
+
+  const candidates: string[] = [];
+  if (looksPkcs8) {
+    candidates.push(raw);
+  } else {
+    candidates.push(raw);
+    const normalized = normalizeKalshiPrivateKeyPem(raw);
+    if (normalized !== raw) candidates.push(normalized);
+  }
+
+  let lastErr: Error | undefined;
+  for (const pem of candidates) {
+    try {
+      const key = crypto.createPrivateKey(pem);
+      if (key.asymmetricKeyType !== "rsa") {
+        lastErr = new Error(`Expected RSA private key, got ${key.asymmetricKeyType ?? "unknown"}`);
+        continue;
+      }
+      return pem;
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+    }
+  }
+
+  const firstLine = raw.split("\n")[0]?.slice(0, 72) ?? "(empty)";
+  throw new Error(
+    `Kalshi private key from ${source} failed to parse (${lastErr?.message ?? "unknown"}). ` +
+      `Length ${raw.length} chars; first line: ${firstLine}. ` +
+      `If you use KALSHI_PRIVATE_KEY_PATH, remove or comment out KALSHI_PRIVATE_KEY_PEM in .env. ` +
+      `Try: openssl rsa -in your.pem -check -noout`
+  );
+}
+
+/**
+ * Resolve private key: configured file path, then ./kalshi_private_key.pem, then a long
+ * KALSHI_PRIVATE_KEY_PEM. Short env values (shell placeholders, partial .env) are skipped
+ * so they do not override a real on-disk key.
+ */
+export function findKalshiPrivateKeyPem(): string {
+  const pathsToTry: string[] = [];
+  const configured = (process.env.KALSHI_PRIVATE_KEY_PATH ?? "").trim();
+  if (configured) {
+    const abs = path.isAbsolute(configured)
+      ? configured
+      : path.resolve(PROJECT_ROOT, configured.replace(/^\.\//, ""));
+    pathsToTry.push(abs);
+  }
+  pathsToTry.push(path.join(PROJECT_ROOT, "kalshi_private_key.pem"));
+
+  const seen = new Set<string>();
+  for (const abs of pathsToTry) {
+    const norm = path.normalize(abs);
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    try {
+      if (!fs.existsSync(abs)) continue;
+      if (fs.statSync(abs).size < 80) continue;
+      const raw = fs.readFileSync(abs, "utf8");
+      return resolveKalshiPrivateKeyPem(raw, abs);
+    } catch {
+      continue;
+    }
+  }
+
+  const envRaw = (process.env.KALSHI_PRIVATE_KEY_PEM ?? "").trim();
+  if (!envRaw) {
+    throw new Error(
+      "No usable Kalshi private key. Set KALSHI_PRIVATE_KEY_PATH, add kalshi_private_key.pem " +
+        "in the project root, or set KALSHI_PRIVATE_KEY_PEM to the full PEM."
+    );
+  }
+  if (envRaw.length < MIN_INLINE_PEM_CHARS) {
+    throw new Error(
+      `KALSHI_PRIVATE_KEY_PEM is only ${envRaw.length} characters (too short for a real RSA key). ` +
+        "Unset it in your shell and .env, or use KALSHI_PRIVATE_KEY_PATH=./kalshi_private_key.pem."
+    );
+  }
+  return resolveKalshiPrivateKeyPem(envRaw, "KALSHI_PRIVATE_KEY_PEM");
+}
+
 function getPrivateKeyPem(): string {
   const raw = (process.env.KALSHI_PRIVATE_KEY_PEM ?? "").trim();
   if (!raw) return "";
-  return normalizePrivateKeyPem(raw);
+  return normalizeKalshiPrivateKeyPem(raw);
 }
 
 function parseSeriesList(raw: string): string[] {
